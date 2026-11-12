@@ -728,7 +728,7 @@ button { font: inherit; }
 
 /* RSVP CONNECTION */
 
-const RSVP_ENDPOINT = "";
+const RSVP_ENDPOINT = "https://script.google.com/macros/s/AKfycbwilMsAVGX9DBCGMG7jPMuc5JnyEi3FYvmoMowwLgWjyrh8xrDGx_D_8VrXqtJxkskBVA/exec";
 
 
 /* SCREEN NAVIGATION */
@@ -909,17 +909,62 @@ const declineMessage =
 
 let submitting = false;
 
+
+/* SEND RESPONSE TO GOOGLE APPS SCRIPT */
+
+function submitRsvp(token, response) {
+
+  return new Promise((resolve, reject) => {
+
+    const callbackName = "chairmanRsvpCallback";
+    const script = document.createElement("script");
+
+    let timeout;
+
+    function cleanup() {
+      delete window[callbackName];
+      script.remove();
+      clearTimeout(timeout);
+    }
+
+    window[callbackName] = data => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Your response could not be submitted. Please try again."));
+    };
+
+    timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("The response is taking too long. Please try again."));
+    }, 20000);
+
+    const params = new URLSearchParams({
+      token: token,
+      response: response,
+      callback: callbackName,
+      _: String(Date.now())
+    });
+
+    script.src = RSVP_ENDPOINT + "?" + params.toString();
+
+    document.body.appendChild(script);
+
+  });
+
+}
+
+
+/* RSVP BUTTONS */
+
 choices.forEach(button => {
 
   button.addEventListener("click", async () => {
 
     if (submitting) return;
-
-    if (!RSVP_ENDPOINT) {
-      statusMessage.textContent =
-        "The RSVP connection is still being set up. Please try again shortly.";
-      return;
-    }
 
     submitting = true;
 
@@ -927,7 +972,7 @@ choices.forEach(button => {
 
     statusMessage.textContent = "Recording your response...";
 
-    const response = button.dataset.response;
+    const selectedResponse = button.dataset.response;
 
     try {
 
@@ -938,29 +983,24 @@ choices.forEach(button => {
         throw new Error("Your invitation link is missing its guest reference.");
       }
 
-      const result = await fetch(RSVP_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          guest: token,
-          response: response
-        })
-      });
+      const response = selectedResponse === "accepted"
+        ? "accept"
+        : "decline";
 
-      if (!result.ok) {
-        throw new Error("Your response was not recorded. Please try again.");
-      }
+      const data = await submitRsvp(token, response);
 
-      const data = await result.json();
-
-      if (!data.success) {
-        throw new Error(data.message || "Your response was not recorded.");
+      if (!data || !data.success) {
+        throw new Error(
+          data && data.message
+            ? data.message
+            : "Your response was not recorded. Please try again."
+        );
       }
 
       document.getElementById("confirmation-copy").textContent =
-        response === "accepted" ? acceptanceMessage : declineMessage;
+        selectedResponse === "accepted"
+          ? acceptanceMessage
+          : declineMessage;
 
       showScreen("confirmation");
 
